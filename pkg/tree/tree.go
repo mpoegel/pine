@@ -23,9 +23,12 @@ type Tree interface {
 type TreeImpl struct {
 	config Config
 
-	stopChan chan bool
-	fullStop bool
-	runCount int
+	stopChan      chan bool
+	fullStop      bool
+	runCount      int
+	currState     State
+	startedAt     time.Time
+	lastChangedAt time.Time
 }
 
 func NewTree(cfgFile string) (*TreeImpl, error) {
@@ -35,16 +38,19 @@ func NewTree(cfgFile string) (*TreeImpl, error) {
 	}
 
 	return &TreeImpl{
-		config:   cfg,
-		stopChan: make(chan bool, 1),
-		fullStop: false,
-		runCount: 0,
+		config:        cfg,
+		stopChan:      make(chan bool, 1),
+		fullStop:      false,
+		runCount:      0,
+		currState:     StoppedState,
+		lastChangedAt: time.Now(),
 	}, nil
 }
 
 func (t *TreeImpl) Start(ctx context.Context) error {
 	var err error
 	for !t.fullStop {
+		t.currState = RestartingState
 		if t.runCount > 0 {
 			time.Sleep(t.config.RestartDelay)
 		}
@@ -104,6 +110,8 @@ func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
 		cmd.Stderr = fp
 	}
 	t.runCount++
+	t.startedAt = time.Now()
+	t.currState = RunningState
 	errChan <- cmd.Run()
 }
 
@@ -152,7 +160,13 @@ func (t *TreeImpl) Stop(ctx context.Context) error {
 }
 
 func (t *TreeImpl) Status(ctx context.Context) (*Status, error) {
-	return nil, nil
+	status := &Status{
+		For:        &t.config,
+		State:      t.currState,
+		Uptime:     time.Since(t.startedAt),
+		LastChange: t.lastChangedAt,
+	}
+	return status, nil
 }
 
 func (t *TreeImpl) Restart(ctx context.Context) error {
