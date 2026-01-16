@@ -1,5 +1,6 @@
 package pine
 
 type Config struct {
-	TreeDir string
+	TreeDir     string
+	UdsEndpoint string
 }

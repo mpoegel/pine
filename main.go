@@ -13,10 +13,12 @@ import (
 func main() {
 	config := pine.Config{}
 	flag.StringVar(&config.TreeDir, "d", "/usr/local/etc/forest.d", "directory to find service configs")
+	flag.StringVar(&config.UdsEndpoint, "e", "/var/run/pine.sock", "UDS endpoint for talking to pine")
 
 	flag.Parse()
 
-	if run(config) != nil {
+	if err := run(config); err != nil {
+		slog.Error("pine failed", "err", err)
 		os.Exit(1)
 	}
 }

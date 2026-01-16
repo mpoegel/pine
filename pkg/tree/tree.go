@@ -49,6 +49,7 @@ func NewTree(cfgFile string) (*TreeImpl, error) {
 
 func (t *TreeImpl) Start(ctx context.Context) error {
 	var err error
+	t.fullStop = false
 	for !t.fullStop {
 		t.currState = RestartingState
 		if t.runCount > 0 {
@@ -62,9 +63,11 @@ func (t *TreeImpl) Start(ctx context.Context) error {
 		err = t.runWait(cancel, errChan)
 		close(errChan)
 		if t.config.Restart == NeverRestart || (t.config.Restart == LimitedRestart && t.runCount >= t.config.RestartAttempts) {
+			t.currState = StoppedState
 			return err
 		}
 	}
+	t.currState = StoppedState
 	return err
 }
 
@@ -163,8 +166,11 @@ func (t *TreeImpl) Status(ctx context.Context) (*Status, error) {
 	status := &Status{
 		For:        &t.config,
 		State:      t.currState,
-		Uptime:     time.Since(t.startedAt),
+		Uptime:     0,
 		LastChange: t.lastChangedAt,
+	}
+	if t.currState == RunningState {
+		status.Uptime = time.Since(t.startedAt)
 	}
 	return status, nil
 }

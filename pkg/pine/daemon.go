@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"path"
 	"path/filepath"
 	"sync"
@@ -34,6 +35,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 	slog.Info("running daemon")
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	ln, err := net.Listen("unix", d.config.UdsEndpoint)
+	if err != nil {
+		return err
+	}
+	d.wg.Go(func() {
+		slog.Info("starting http server", "endpoint", d.config.UdsEndpoint)
+		httpServer := NewHttpServer(d)
+		err := httpServer.Start(ctx, ln)
+		slog.Info("http server finished", "err", err)
+		ln.Close()
+	})
+
 	if err := d.findTrees(ctx); err != nil {
 		return err
 	}
@@ -146,5 +160,57 @@ func (d *Daemon) stop(ctx context.Context) {
 
 	for _, t := range d.trees {
 		t.Destroy(ctx)
+	}
+}
+
+func (d *Daemon) StartTree(ctx context.Context, name string) error {
+	d.treeLock.RLock()
+	defer d.treeLock.RUnlock()
+	t, ok := d.trees[name]
+	if !ok {
+		return errors.New("tree not found")
+	} else {
+		d.wg.Go(func() {
+			err := t.Start(ctx)
+			slog.Info("tree finished", "name", name, "err", err)
+		})
+	}
+	return nil
+}
+
+func (d *Daemon) StopTree(ctx context.Context, name string) error {
+	d.treeLock.RLock()
+	defer d.treeLock.RUnlock()
+	t, ok := d.trees[name]
+	if !ok {
+		return errors.New("tree not found")
+	} else {
+		t.Stop(ctx)
+	}
+	return nil
+}
+
+func (d *Daemon) RestartTree(ctx context.Context, name string) error {
+	d.treeLock.RLock()
+	defer d.treeLock.RUnlock()
+	t, ok := d.trees[name]
+	if !ok {
+		return errors.New("tree not found")
+	} else if t.Config().Restart == tree.NeverRestart {
+		return errors.New("cannot restart")
+	} else {
+		t.Restart(ctx)
+	}
+	return nil
+}
+
+func (d *Daemon) GetTreeStatus(ctx context.Context, name string) (*tree.Status, error) {
+	d.treeLock.RLock()
+	defer d.treeLock.RUnlock()
+	t, ok := d.trees[name]
+	if !ok {
+		return nil, errors.New("tree not found")
+	} else {
+		return t.Status(ctx)
 	}
 }
