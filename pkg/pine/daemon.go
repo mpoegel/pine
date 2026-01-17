@@ -250,3 +250,30 @@ func (d *Daemon) rotateTreeLogFiles(ctx context.Context) {
 		}
 	}
 }
+
+func (d *Daemon) ListTrees(ctx context.Context) ([]*tree.Status, error) {
+	res := []*tree.Status{}
+	var err error
+	d.treeLock.RLock()
+	defer d.treeLock.RUnlock()
+	for _, t := range d.trees {
+		status, statusErr := t.Status(ctx)
+		if statusErr != nil {
+			err = errors.Join(err)
+		} else {
+			res = append(res, status)
+		}
+	}
+	return res, err
+}
+
+func (d *Daemon) RotateTreeLog(ctx context.Context, name string) error {
+	d.treeLock.RLock()
+	defer d.treeLock.RUnlock()
+	t, ok := d.trees[name]
+	if !ok {
+		return errors.New("tree not found")
+	} else {
+		return t.RotateLog()
+	}
+}

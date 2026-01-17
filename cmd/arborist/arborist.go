@@ -46,6 +46,17 @@ func run(ctx context.Context, client arborist.Client, command, treeName string) 
 		} else {
 			fmt.Printf("Tree:%s State:%s Uptime:%d LastChange:%d\n", status.TreeName, status.State, status.Uptime, status.LastChange)
 		}
+	case "list":
+		if statusList, err := client.ListTrees(ctx); err != nil {
+			return err
+		} else {
+			for _, status := range statusList.Trees {
+				fmt.Printf("Tree:%s State:%s Uptime:%d LastChange:%d\n", status.TreeName, status.State, status.Uptime, status.LastChange)
+			}
+		}
+	case "logrotate":
+		return client.RotateTreeLog(ctx, treeName)
 	}
+
 	return nil
 }
