@@ -60,7 +60,12 @@ func (t *TreeImpl) Start(ctx context.Context) error {
 	for !t.fullStop {
 		t.currState = RestartingState
 		if t.runCount > 0 {
-			time.Sleep(t.config.RestartDelay)
+			timer := time.NewTimer(t.config.RestartDelay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return nil
+			}
 		}
 		slog.Info("starting tree", "name", t.config.Name)
 		ctx, cancel := context.WithCancel(ctx)
@@ -79,6 +84,7 @@ func (t *TreeImpl) Start(ctx context.Context) error {
 }
 
 func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
+	t.runCount++
 	commandParts := strings.Split(t.config.Command, " ")
 	args := []string{}
 	if len(commandParts) > 1 {
@@ -106,15 +112,15 @@ func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
 	defer t.logger.Close()
 	cmd.Stdout = t.logger
 	cmd.Stderr = t.logger
-	t.runCount++
 	t.startedAt = time.Now()
 	t.currState = RunningState
 	errChan <- cmd.Run()
 }
 
 func (t *TreeImpl) setCmdSysProcAttr(cmd *exec.Cmd) error {
-	if t.config.User == "root" {
-		return nil
+	currUser, err := user.Current()
+	if err != nil || currUser.Username == t.config.User {
+		return err
 	}
 
 	// Look up the user details
@@ -149,11 +155,6 @@ func (t *TreeImpl) runWait(cancel context.CancelFunc, errChan chan error) error 
 		case <-t.stopChan:
 			cancel()
 		case err := <-errChan:
-			if err != nil {
-				slog.Warn("tree exited abnormally", "name", t.config.Name, "err", err)
-			} else {
-				slog.Info("tree exited", "name", t.config.Name)
-			}
 			return err
 		}
 	}

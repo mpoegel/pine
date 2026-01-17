@@ -34,11 +34,15 @@ const (
 	LimitedRestart RestartLevel = "limited"
 )
 
+var (
+	DefaultUser = "op"
+)
+
 func LoadConfig(filename string) (Config, error) {
 	cfg := Config{
 		OriginFile: filename,
 		// defaults
-		User:            "op",
+		User:            DefaultUser,
 		MaxLogAge:       7,
 		Restart:         NeverRestart,
 		RestartAttempts: 3,

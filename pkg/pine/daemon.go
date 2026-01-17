@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"sync"
@@ -36,6 +38,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	if d.config.UnprivilegedMode {
+		currUser, err := user.Current()
+		if err != nil {
+			return err
+		}
+		tree.DefaultUser = currUser.Username
+	}
+
 	ln, err := net.Listen("unix", d.config.UdsEndpoint)
 	if err != nil {
 		return err
@@ -58,6 +68,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	<-ctx.Done()
 	d.stop(context.Background())
 	d.wg.Wait()
+	slog.Info("daemon finished")
 	return nil
 }
 
@@ -73,6 +84,9 @@ func (d *Daemon) findTrees(ctx context.Context) error {
 		return errors.Join(err, watcher.Close())
 	}
 	for _, filename := range files {
+		if stat, err := os.Stat(filename); err == nil && stat.IsDir() {
+			continue
+		}
 		d.loadTree(ctx, filename)
 	}
 
@@ -107,10 +121,10 @@ func (d *Daemon) loadTree(ctx context.Context, filename string) {
 	slog.Info("adding new tree", "filename", filename)
 
 	d.treeLock.Lock()
-	defer d.treeLock.Unlock()
 	t, err := tree.NewTree(filename)
 	if err != nil {
 		slog.Warn("failed to create new tree", "filename", filename, "err", err)
+		d.treeLock.Unlock()
 		return
 	}
 
@@ -118,14 +132,13 @@ func (d *Daemon) loadTree(ctx context.Context, filename string) {
 	if ot, ok := d.trees[name]; ok {
 		slog.Warn("conflicting tree names", "filename", filename, "name", name, "existing", ot.Config().OriginFile)
 		t.Destroy(ctx)
+		d.treeLock.Unlock()
 		return
 	}
 	d.trees[name] = t
+	d.treeLock.Unlock()
 
-	d.wg.Go(func() {
-		err = t.Start(ctx)
-		slog.Info("tree finished", "name", name, "filename", filename, "err", err)
-	})
+	d.StartTree(ctx, name)
 }
 
 func (d *Daemon) updateTree(ctx context.Context, filename string) {
