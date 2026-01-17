@@ -13,6 +13,7 @@ type Config struct {
 	Name       string
 	OriginFile string
 	Command    string
+	User       string
 
 	EnvironmentFile string
 	StdoutFile      string
@@ -35,6 +36,7 @@ func LoadConfig(filename string) (Config, error) {
 	cfg := Config{
 		OriginFile: filename,
 		// defaults
+		User:            "op",
 		Restart:         NeverRestart,
 		RestartAttempts: 3,
 		RestartDelay:    3 * time.Second,
@@ -66,6 +68,8 @@ func LoadConfig(filename string) (Config, error) {
 		case "Name":
 			cfg.Name = value
 		case "Command":
+			cfg.Command = value
+		case "User":
 			cfg.Command = value
 		case "EnvironmentFile":
 			cfg.EnvironmentFile = value

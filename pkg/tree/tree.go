@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -78,6 +81,10 @@ func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
 		args = commandParts[1:]
 	}
 	cmd := exec.CommandContext(ctx, commandParts[0], args...)
+	if err := t.setCmdSysProcAttr(cmd); err != nil {
+		errChan <- err
+		return
+	}
 	if len(t.config.EnvironmentFile) > 0 {
 		envVars, err := t.loadEnvFile(t.config.EnvironmentFile)
 		if err != nil {
@@ -116,6 +123,37 @@ func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
 	t.startedAt = time.Now()
 	t.currState = RunningState
 	errChan <- cmd.Run()
+}
+
+func (t *TreeImpl) setCmdSysProcAttr(cmd *exec.Cmd) error {
+	if t.config.User == "root" {
+		return nil
+	}
+
+	// Look up the user details
+	u, err := user.Lookup(t.config.User)
+	if err != nil {
+		return err
+	}
+
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return fmt.Errorf("failed to parse UID: %w", err)
+	}
+
+	gid, err := strconv.Atoi(u.Gid)
+	if err != nil {
+		return fmt.Errorf("failed to parse GID: %w", err)
+	}
+
+	// Set the SysProcAttr to run as the target user
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{
+			Uid: uint32(uid),
+			Gid: uint32(gid),
+		},
+	}
+	return nil
 }
 
 func (t *TreeImpl) runWait(cancel context.CancelFunc, errChan chan error) error {
