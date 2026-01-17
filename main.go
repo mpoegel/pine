@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"syscall"
 
 	pine "github.com/mpoegel/pine/pkg/pine"
 )
@@ -27,7 +28,7 @@ func main() {
 func run(config pine.Config) error {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	daemon := pine.NewDaemon(config)

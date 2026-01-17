@@ -58,6 +58,7 @@ func NewTree(cfgFile string) (*TreeImpl, error) {
 func (t *TreeImpl) Start(ctx context.Context) error {
 	var err error
 	t.fullStop = false
+	t.runCount = 0
 	for !t.fullStop {
 		t.currState = RestartingState
 		if t.runCount > 0 {
