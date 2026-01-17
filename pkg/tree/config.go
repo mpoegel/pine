@@ -19,6 +19,7 @@ type Config struct {
 
 	EnvironmentFile string
 	LogFile         string
+	MaxLogAge       int
 
 	Restart         RestartLevel
 	RestartAttempts int
@@ -38,6 +39,7 @@ func LoadConfig(filename string) (Config, error) {
 		OriginFile: filename,
 		// defaults
 		User:            "op",
+		MaxLogAge:       7,
 		Restart:         NeverRestart,
 		RestartAttempts: 3,
 		RestartDelay:    3 * time.Second,
@@ -76,6 +78,10 @@ func LoadConfig(filename string) (Config, error) {
 			cfg.EnvironmentFile = value
 		case "LogFile":
 			cfg.LogFile = value
+		case "MaxLogAge":
+			if cfg.MaxLogAge, err = strconv.Atoi(value); err != nil {
+				return cfg, errors.New("invalid max log age")
+			}
 		case "Restart":
 			switch value {
 			case "always":
@@ -113,6 +119,9 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if len(cfg.LogFile) == 0 {
 		cfg.LogFile = fmt.Sprintf("/var/log/homelab/%s.log", cfg.Name)
+	}
+	if cfg.MaxLogAge < 1 {
+		return errors.New("invalid max log age")
 	}
 	return nil
 }

@@ -98,7 +98,7 @@ func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
 		cmd.Env = envVars
 	}
 	var err error
-	t.logger, err = NewRotatingFileWriter(t.config.LogFile)
+	t.logger, err = NewRotatingFileWriter(t.config.LogFile, t.config.MaxLogAge)
 	if err != nil {
 		errChan <- err
 		return
