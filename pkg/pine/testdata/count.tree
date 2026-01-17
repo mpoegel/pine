@@ -1,3 +1,4 @@
 # this is a test
 Name        Counter
 Command     pkg/pine/testdata/scripts/count.sh
+Restart     always

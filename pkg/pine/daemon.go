@@ -10,9 +10,14 @@ import (
 	"path"
 	"path/filepath"
 	"sync"
+	"time"
 
 	fsnotify "github.com/fsnotify/fsnotify"
 	tree "github.com/mpoegel/pine/pkg/tree"
+)
+
+const (
+	flushInterval = 5 * time.Second
 )
 
 type Daemon struct {
@@ -91,6 +96,9 @@ func (d *Daemon) findTrees(ctx context.Context) error {
 	}
 
 	d.wg.Go(func() {
+		updateQueueLock := sync.Mutex{}
+		updateQueue := map[string]bool{}
+		flushTimer := time.NewTimer(flushInterval)
 		for {
 			select {
 			case <-ctx.Done():
@@ -100,12 +108,24 @@ func (d *Daemon) findTrees(ctx context.Context) error {
 					return
 				}
 				if event.Has(fsnotify.Write) {
-					d.updateTree(ctx, event.Name)
+					updateQueueLock.Lock()
+					updateQueue[event.Name] = true
+					updateQueueLock.Unlock()
 				} else if event.Has(fsnotify.Create) {
 					d.loadTree(ctx, event.Name)
 				} else if event.Has(fsnotify.Remove) {
 					d.removeTree(ctx, event.Name)
 				}
+			case <-flushTimer.C:
+				updateQueueLock.Lock()
+				for filename, hasUpdate := range updateQueue {
+					if hasUpdate {
+						d.updateTree(ctx, filename)
+						updateQueue[filename] = false
+					}
+				}
+				updateQueueLock.Unlock()
+				flushTimer.Reset(flushInterval)
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
@@ -143,7 +163,23 @@ func (d *Daemon) loadTree(ctx context.Context, filename string) {
 
 func (d *Daemon) updateTree(ctx context.Context, filename string) {
 	slog.Info("updating tree", "filename", filename)
-	// TODO
+
+	newConfig, err := tree.LoadConfig(filename)
+	if err != nil {
+		slog.Warn("cannot update tree", "err", err)
+		return
+	}
+	name := newConfig.Name
+
+	d.treeLock.RLock()
+	t, ok := d.trees[name]
+	if !ok {
+		slog.Warn("tree not found to update", "name", name, "filename", filename)
+		return
+	}
+
+	t.Reload(ctx)
+	d.treeLock.RUnlock()
 }
 
 func (d *Daemon) removeTree(ctx context.Context, filename string) {

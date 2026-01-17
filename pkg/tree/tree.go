@@ -22,6 +22,7 @@ type Tree interface {
 	Destroy(ctx context.Context) error
 	RotateLog() error
 	Config() Config
+	Reload(ctx context.Context) error
 }
 
 type TreeImpl struct {
@@ -184,7 +185,10 @@ func (t *TreeImpl) loadEnvFile(filename string) ([]string, error) {
 func (t *TreeImpl) Stop(ctx context.Context) error {
 	slog.Info("stopping tree", "name", t.config.Name)
 	t.fullStop = true
-	t.stopChan <- true
+	select {
+	case t.stopChan <- true:
+	default:
+	}
 	return nil
 }
 
@@ -202,7 +206,10 @@ func (t *TreeImpl) Status(ctx context.Context) (*Status, error) {
 }
 
 func (t *TreeImpl) Restart(ctx context.Context) error {
-	t.stopChan <- true
+	select {
+	case t.stopChan <- true:
+	default:
+	}
 	return nil
 }
 
@@ -220,5 +227,16 @@ func (t *TreeImpl) RotateLog() error {
 	if t.logger != nil {
 		return t.logger.Rotate()
 	}
+	return nil
+}
+
+func (t *TreeImpl) Reload(ctx context.Context) error {
+	newConfig, err := LoadConfig(t.config.OriginFile)
+	if err != nil {
+		return err
+	}
+
+	t.config = newConfig
+	t.Restart(ctx)
 	return nil
 }
