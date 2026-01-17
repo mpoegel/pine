@@ -1,0 +1,13 @@
+[[bundle]]
+extra/pine.service          /etc/systemd/system/pine.service
+
+[[go_build]]
+main.go                     /usr/local/sbin/pine
+cmd/arborist/arborist.go    /usr/local/sbin/arborist
+
+[[post_install]]
+id op &>/dev/null || useradd -r -s /usr/sbin/nologin -G docker op
+systemctl daemon-reload
+systemctl restart pine.service
+systemctl enable pine.service
+service pine status

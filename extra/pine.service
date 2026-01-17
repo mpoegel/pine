@@ -1,0 +1,19 @@
+[Unit]
+Description=Pine - homelab process manager
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+User=root
+Group=root
+Type=simple
+Restart=on-failure
+RestartSec=5s
+ExecStart=/usr/local/sbin/pine
+StandardOutput=append:/var/log/homelab/pine.log
+StandardError=append:/var/log/homelab/pine.log
+
+[Install]
+WantedBy=multi-user.target
