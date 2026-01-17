@@ -2,8 +2,10 @@ package tree
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -11,13 +13,12 @@ import (
 
 type Config struct {
 	Name       string
-	OriginFile string
-	Command    string
+	OriginFile string // required
+	Command    string // required
 	User       string
 
 	EnvironmentFile string
-	StdoutFile      string
-	StderrFile      string
+	LogFile         string
 
 	Restart         RestartLevel
 	RestartAttempts int
@@ -73,10 +74,8 @@ func LoadConfig(filename string) (Config, error) {
 			cfg.Command = value
 		case "EnvironmentFile":
 			cfg.EnvironmentFile = value
-		case "StdoutFile":
-			cfg.EnvironmentFile = value
-		case "StderrFile":
-			cfg.StderrFile = value
+		case "LogFile":
+			cfg.LogFile = value
 		case "Restart":
 			switch value {
 			case "always":
@@ -99,5 +98,21 @@ func LoadConfig(filename string) (Config, error) {
 		}
 	}
 
-	return cfg, nil
+	return cfg, ValidateConfig(&cfg)
+}
+
+func ValidateConfig(cfg *Config) error {
+	if len(cfg.OriginFile) == 0 {
+		return errors.New("missing origin file")
+	}
+	if len(cfg.Command) == 0 {
+		return errors.New("missing command")
+	}
+	if len(cfg.Name) == 0 {
+		cfg.Name = strings.TrimSuffix(filepath.Base(cfg.OriginFile), filepath.Ext(cfg.OriginFile))
+	}
+	if len(cfg.LogFile) == 0 {
+		cfg.LogFile = fmt.Sprintf("/var/log/homelab/%s.log", cfg.Name)
+	}
+	return nil
 }

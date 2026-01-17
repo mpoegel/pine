@@ -47,6 +47,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		slog.Info("http server finished", "err", err)
 		ln.Close()
 	})
+	d.wg.Go(func() {
+		d.rotateTreeLogFiles(ctx)
+	})
 
 	if err := d.findTrees(ctx); err != nil {
 		return err
@@ -212,5 +215,25 @@ func (d *Daemon) GetTreeStatus(ctx context.Context, name string) (*tree.Status, 
 		return nil, errors.New("tree not found")
 	} else {
 		return t.Status(ctx)
+	}
+}
+
+func (d *Daemon) rotateTreeLogFiles(ctx context.Context) {
+	timer := timerUntilMidnight()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			slog.Info("rotating tree logs")
+			d.treeLock.RLock()
+			defer d.treeLock.RUnlock()
+			for name, t := range d.trees {
+				if err := t.RotateLog(); err != nil {
+					slog.Warn("failed to rotate logfile", "name", name, "err", err)
+				}
+			}
+			timer = timerUntilMidnight()
+		}
 	}
 }

@@ -20,6 +20,7 @@ type Tree interface {
 	Status(ctx context.Context) (*Status, error)
 	Restart(ctx context.Context) error
 	Destroy(ctx context.Context) error
+	RotateLog() error
 	Config() Config
 }
 
@@ -32,7 +33,10 @@ type TreeImpl struct {
 	currState     State
 	startedAt     time.Time
 	lastChangedAt time.Time
+	logger        *RotatingFileWriter
 }
+
+var _ Tree = (*TreeImpl)(nil)
 
 func NewTree(cfgFile string) (*TreeImpl, error) {
 	cfg, err := LoadConfig(cfgFile)
@@ -93,32 +97,15 @@ func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
 		}
 		cmd.Env = envVars
 	}
-	openFiles := []*os.File{}
-	defer func() {
-		for _, fp := range openFiles {
-			fp.Close()
-		}
-	}()
-	if len(t.config.StdoutFile) > 0 {
-		fp, err := os.OpenFile(t.config.StdoutFile, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
-		if err != nil {
-			errChan <- err
-			return
-		}
-		openFiles = append(openFiles, fp)
-		cmd.Stdout = fp
+	var err error
+	t.logger, err = NewRotatingFileWriter(t.config.LogFile)
+	if err != nil {
+		errChan <- err
+		return
 	}
-	if t.config.StdoutFile == t.config.StderrFile {
-		cmd.Stderr = cmd.Stdout
-	} else if len(t.config.StderrFile) > 0 {
-		fp, err := os.OpenFile(t.config.StderrFile, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
-		if err != nil {
-			errChan <- err
-			return
-		}
-		openFiles = append(openFiles, fp)
-		cmd.Stderr = fp
-	}
+	defer t.logger.Close()
+	cmd.Stdout = t.logger
+	cmd.Stderr = t.logger
 	t.runCount++
 	t.startedAt = time.Now()
 	t.currState = RunningState
@@ -226,4 +213,11 @@ func (t *TreeImpl) Destroy(ctx context.Context) error {
 
 func (t *TreeImpl) Config() Config {
 	return t.config
+}
+
+func (t *TreeImpl) RotateLog() error {
+	if t.logger != nil {
+		return t.logger.Rotate()
+	}
+	return nil
 }

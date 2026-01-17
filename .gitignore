@@ -3,3 +3,5 @@ pine
 arborist
 !pkg/arborist
 !cmd/arborist
+dist
+*.tar.gz
