@@ -1,2 +1,5 @@
 pine
 !pkg/pine
+arborist
+!pkg/arborist
+!cmd/arborist
