@@ -99,6 +99,7 @@ func (d *Daemon) findTrees(ctx context.Context) error {
 		updateQueueLock := sync.Mutex{}
 		updateQueue := map[string]bool{}
 		flushTimer := time.NewTimer(flushInterval)
+		defer flushTimer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -217,16 +218,17 @@ func (d *Daemon) stop(ctx context.Context) {
 
 func (d *Daemon) StartTree(ctx context.Context, name string) error {
 	d.treeLock.RLock()
-	defer d.treeLock.RUnlock()
 	t, ok := d.trees[name]
+	d.treeLock.RUnlock()
+
 	if !ok {
 		return errors.New("tree not found")
-	} else {
-		d.wg.Go(func() {
-			err := t.Start(ctx)
-			slog.Info("tree finished", "name", name, "err", err)
-		})
 	}
+
+	d.wg.Go(func() {
+		err := t.Start(ctx)
+		slog.Info("tree finished", "name", name, "err", err)
+	})
 	return nil
 }
 

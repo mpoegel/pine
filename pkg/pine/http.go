@@ -35,8 +35,6 @@ func NewHttpServer(keeper TreeKeeper) *HttpServer {
 }
 
 func (s *HttpServer) Start(ctx context.Context, ln net.Listener) error {
-	var err error
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /tree/start/{treeName}", s.startTree(ctx))
 	mux.HandleFunc("POST /tree/stop/{treeName}", s.stopTree(ctx))
@@ -46,12 +44,18 @@ func (s *HttpServer) Start(ctx context.Context, ln net.Listener) error {
 	mux.HandleFunc("GET /tree", s.listTrees(ctx))
 	s.server.Handler = mux
 
+	errChan := make(chan error, 1)
 	go func() {
-		err = s.server.Serve(ln)
+		errChan <- s.server.Serve(ln)
 	}()
-	<-ctx.Done()
-	s.server.Shutdown(ctx)
-	return err
+
+	select {
+	case <-ctx.Done():
+		s.server.Shutdown(context.Background())
+		return nil
+	case err := <-errChan:
+		return err
+	}
 }
 
 func (s *HttpServer) startTree(ctx context.Context) http.HandlerFunc {

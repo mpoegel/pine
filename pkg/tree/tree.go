@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -26,8 +27,10 @@ type Tree interface {
 }
 
 type TreeImpl struct {
-	config Config
+	configMu sync.RWMutex
+	config   Config
 
+	stateMu       sync.Mutex
 	stopChan      chan bool
 	fullStop      bool
 	runCount      int
@@ -57,76 +60,118 @@ func NewTree(cfgFile string) (*TreeImpl, error) {
 
 func (t *TreeImpl) Start(ctx context.Context) error {
 	var err error
+
+	t.configMu.RLock()
+	restartMode := t.config.Restart
+	restartAttempts := t.config.RestartAttempts
+	restartDelay := t.config.RestartDelay
+	name := t.config.Name
+	t.configMu.RUnlock()
+
+	t.stateMu.Lock()
 	t.fullStop = false
 	t.runCount = 0
-	for !t.fullStop {
+	t.stateMu.Unlock()
+
+	for {
+		t.stateMu.Lock()
+		if t.fullStop {
+			t.currState = StoppedState
+			t.stateMu.Unlock()
+			return err
+		}
 		t.currState = RestartingState
-		if t.runCount > 0 {
-			timer := time.NewTimer(t.config.RestartDelay)
+		runCount := t.runCount
+		t.stateMu.Unlock()
+
+		if runCount > 0 {
+			timer := time.NewTimer(restartDelay)
 			select {
 			case <-timer.C:
 			case <-ctx.Done():
 				return nil
 			}
 		}
-		slog.Info("starting tree", "name", t.config.Name)
+		slog.Info("starting tree", "name", name)
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
+
+		t.configMu.RLock()
+		cmd := t.config.Command
+		envFile := t.config.EnvironmentFile
+		user := t.config.User
+		logFile := t.config.LogFile
+		maxLogAge := t.config.MaxLogAge
+		t.configMu.RUnlock()
+
 		errChan := make(chan error)
-		go t.run(ctx, errChan)
+		go t.run(ctx, cmd, envFile, user, logFile, maxLogAge, errChan)
 		err = t.runWait(cancel, errChan)
 		close(errChan)
-		if t.config.Restart == NeverRestart || (t.config.Restart == LimitedRestart && t.runCount >= t.config.RestartAttempts) {
+
+		t.stateMu.Lock()
+		currentRunCount := t.runCount
+		shouldStop := t.fullStop || (restartMode == NeverRestart) || (restartMode == LimitedRestart && currentRunCount >= restartAttempts)
+		t.stateMu.Unlock()
+
+		if shouldStop {
+			t.stateMu.Lock()
 			t.currState = StoppedState
+			t.stateMu.Unlock()
 			return err
 		}
 	}
-	t.currState = StoppedState
-	return err
 }
 
-func (t *TreeImpl) run(ctx context.Context, errChan chan error) {
+func (t *TreeImpl) run(ctx context.Context, cmd string, envFile string, user string, logFile string, maxLogAge int, errChan chan error) {
+	t.stateMu.Lock()
 	t.runCount++
-	commandParts := strings.Split(t.config.Command, " ")
+	t.stateMu.Unlock()
+
+	commandParts := strings.Split(cmd, " ")
 	args := []string{}
 	if len(commandParts) > 1 {
 		args = commandParts[1:]
 	}
-	cmd := exec.CommandContext(ctx, commandParts[0], args...)
-	if err := t.setCmdSysProcAttr(cmd); err != nil {
+	execCmd := exec.CommandContext(ctx, commandParts[0], args...)
+	if err := t.setCmdSysProcAttr(execCmd, user); err != nil {
 		errChan <- err
 		return
 	}
-	if len(t.config.EnvironmentFile) > 0 {
-		envVars, err := t.loadEnvFile(t.config.EnvironmentFile)
+	if len(envFile) > 0 {
+		envVars, err := t.loadEnvFile(envFile)
 		if err != nil {
 			errChan <- err
 			return
 		}
-		cmd.Env = envVars
+		execCmd.Env = envVars
 	}
 	var err error
-	t.logger, err = NewRotatingFileWriter(t.config.LogFile, t.config.MaxLogAge)
+	t.logger, err = NewRotatingFileWriter(logFile, maxLogAge)
 	if err != nil {
 		errChan <- err
 		return
 	}
 	defer t.logger.Close()
-	cmd.Stdout = t.logger
-	cmd.Stderr = t.logger
+	execCmd.Stdout = t.logger
+	execCmd.Stderr = t.logger
+
+	t.stateMu.Lock()
 	t.startedAt = time.Now()
 	t.currState = RunningState
-	errChan <- cmd.Run()
+	t.stateMu.Unlock()
+
+	errChan <- execCmd.Run()
 }
 
-func (t *TreeImpl) setCmdSysProcAttr(cmd *exec.Cmd) error {
+func (t *TreeImpl) setCmdSysProcAttr(cmd *exec.Cmd, targetUser string) error {
 	currUser, err := user.Current()
-	if err != nil || currUser.Username == t.config.User {
+	if err != nil || currUser.Username == targetUser {
 		return err
 	}
 
 	// Look up the user details
-	u, err := user.Lookup(t.config.User)
+	u, err := user.Lookup(targetUser)
 	if err != nil {
 		return err
 	}
@@ -184,8 +229,13 @@ func (t *TreeImpl) loadEnvFile(filename string) ([]string, error) {
 }
 
 func (t *TreeImpl) Stop(ctx context.Context) error {
-	slog.Info("stopping tree", "name", t.config.Name)
+	t.configMu.RLock()
+	name := t.config.Name
+	t.configMu.RUnlock()
+	slog.Info("stopping tree", "name", name)
+	t.stateMu.Lock()
 	t.fullStop = true
+	t.stateMu.Unlock()
 	select {
 	case t.stopChan <- true:
 	default:
@@ -194,14 +244,24 @@ func (t *TreeImpl) Stop(ctx context.Context) error {
 }
 
 func (t *TreeImpl) Status(ctx context.Context) (*Status, error) {
+	t.configMu.RLock()
+	cfg := t.config
+	t.configMu.RUnlock()
+
+	t.stateMu.Lock()
+	currState := t.currState
+	startedAt := t.startedAt
+	lastChangedAt := t.lastChangedAt
+	t.stateMu.Unlock()
+
 	status := &Status{
-		For:        &t.config,
-		State:      t.currState,
+		For:        &cfg,
+		State:      currState,
 		Uptime:     0,
-		LastChange: t.lastChangedAt,
+		LastChange: lastChangedAt,
 	}
-	if t.currState == RunningState {
-		status.Uptime = time.Since(t.startedAt)
+	if currState == RunningState {
+		status.Uptime = time.Since(startedAt)
 	}
 	return status, nil
 }
@@ -221,6 +281,8 @@ func (t *TreeImpl) Destroy(ctx context.Context) error {
 }
 
 func (t *TreeImpl) Config() Config {
+	t.configMu.RLock()
+	defer t.configMu.RUnlock()
 	return t.config
 }
 
@@ -232,6 +294,9 @@ func (t *TreeImpl) RotateLog() error {
 }
 
 func (t *TreeImpl) Reload(ctx context.Context) error {
+	t.configMu.Lock()
+	defer t.configMu.Unlock()
+
 	newConfig, err := LoadConfig(t.config.OriginFile)
 	if err != nil {
 		return err

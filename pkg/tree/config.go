@@ -77,7 +77,7 @@ func LoadConfig(filename string) (Config, error) {
 		case "Command":
 			cfg.Command = value
 		case "User":
-			cfg.Command = value
+			cfg.User = value
 		case "EnvironmentFile":
 			cfg.EnvironmentFile = value
 		case "LogFile":
